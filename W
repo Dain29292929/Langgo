@@ -2,6 +2,7 @@
 -- Coin Walker v3 (수정판)
 -- - 가장 가까운 코인 빠르게 탐색
 -- - 50/50 되면 계속 죽는 버그 수정
+-- - 5초 이상 걸리면 타겟 전환
 -- ============================================================
 
 local PathfindingService = game:GetService("PathfindingService")
@@ -45,12 +46,13 @@ end
 
 local lastDeathTime = 0
 local DEATH_COOLDOWN = 6 -- 사망 후 6초 동안은 죽음 체크 안 함
+local MOVE_TIMEOUT = 5 -- 5초 타임아웃
 
 -- 메인 루프
 while true do
     pcall(function()
         if not isAlive() then
-            task.wait(0.4)
+            task.wait(0.2)
             return
         end
 
@@ -58,7 +60,7 @@ while true do
 
         -- Spectate 체크
         pcall(function()
-            local spec = plr:FindFirstChild("PlayerGui") 
+            local spec = plr:FindFirstChild("PlayerGui")
                 and plr.PlayerGui:FindFirstChild("MainUI")
                 and plr.PlayerGui.MainUI:FindFirstChild("MobileNav")
                 and plr.PlayerGui.MainUI.MobileNav:FindFirstChild("Buttons")
@@ -72,7 +74,7 @@ while true do
         if canDo and isAlive() then
             local closestCoin = getClosestCoin()
             if closestCoin then
-                pcall(function()
+                local success = pcall(function()
                     local path = PathfindingService:CreatePath({
                         AgentRadius = 2,
                         AgentHeight = 5,
@@ -82,22 +84,31 @@ while true do
                     path:ComputeAsync(hrp.Position, closestCoin.Position + Vector3.new(3, 0, 3))
 
                     if path.Status == Enum.PathStatus.Success then
+                        local startTime = tick()
+                        
                         for _, waypoint in ipairs(path:GetWaypoints()) do
+                            -- 타임아웃 체크
+                            if tick() - startTime > MOVE_TIMEOUT then
+                                print("[CoinWalker] 5초 초과 → 다른 코인으로 전환")
+                                break
+                            end
+                            
                             if not isAlive() then break end
                             humanoid:MoveTo(waypoint.Position)
                             humanoid.MoveToFinished:Wait()
+                            
                             if waypoint.Action == Enum.PathWaypointAction.Jump then
                                 humanoid.Jump = true
                             end
                         end
-                    end
 
-                    -- 수집
-                    if closestCoin.Parent then
-                        task.wait(0.08)
-                        firetouchinterest(hrp, closestCoin, 0)
-                        task.wait(0.06)
-                        firetouchinterest(hrp, closestCoin, 1)
+                        -- 수집 (타임아웃 안 됐을 때만)
+                        if tick() - startTime <= MOVE_TIMEOUT and closestCoin.Parent then
+                            task.wait(0.08)
+                            firetouchinterest(hrp, closestCoin, 0)
+                            task.wait(0.06)
+                            firetouchinterest(hrp, closestCoin, 1)
+                        end
                     end
                 end)
             end
@@ -124,7 +135,5 @@ while true do
         end
     end)
 
-    task.wait(0.12)
+    task.wait(0.06) -- wait 2배 낮춤 (0.12 → 0.06)
 end
-    
-                
