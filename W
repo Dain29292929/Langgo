@@ -1,0 +1,152 @@
+-- ============================================================
+-- Coin Walker v3 (개선판)
+-- - 항상 "제일 가까운 코인"으로 걸어서 이동
+-- - 죽어도 루프 안 끊김 (CharacterAdded + pcall + isAlive)
+-- ============================================================
+
+local PathfindingService = game:GetService("PathfindingService")
+local Players = game:GetService("Players")
+
+local plr = Players.LocalPlayer
+local char = plr.Character or plr.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+local humanoid = char:WaitForChild("Humanoid")
+
+plr.CharacterAdded:Connect(function(newChar)
+    char = newChar
+    hrp = newChar:WaitForChild("HumanoidRootPart")
+    humanoid = newChar:WaitForChild("Humanoid")
+    print("[CoinWalker] 새 캐릭터 리스폰 완료")
+end)
+
+local function isAlive()
+    return humanoid and humanoid.Health > 0 and hrp and hrp.Parent
+end
+
+-- Pathfinding으로 가장 가까운 코인까지 걸어감
+local function walkTo(targetPosition)
+    if not isAlive() then return end
+
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true
+    })
+
+    path:ComputeAsync(hrp.Position, targetPosition)
+
+    if path.Status == Enum.PathStatus.Success then
+        local waypoints = path:GetWaypoints()
+        for _, waypoint in ipairs(waypoints) do
+            if not isAlive() then break end
+            humanoid:MoveTo(waypoint.Position)
+            humanoid.MoveToFinished:Wait()
+            if waypoint.Action == Enum.PathWaypointAction.Jump then
+                humanoid.Jump = true
+            end
+        end
+    else
+        warn("[CoinWalker] 경로를 찾을 수 없습니다.")
+    end
+end
+
+-- 현재 가장 가까운 코인 찾기
+local function getClosestCoin()
+    local coinsFolder = workspace:FindFirstChild("Game")
+    if coinsFolder then coinsFolder = coinsFolder:FindFirstChild("Coins") end
+    if not coinsFolder then return nil end
+
+    local closestCoin = nil
+    local shortestDistance = math.huge
+
+    for _, part in pairs(coinsFolder:GetChildren()) do
+        if part:IsA("BasePart") then
+            local distance = (part.Position - hrp.Position).Magnitude
+            if distance < shortestDistance then
+                shortestDistance = distance
+                closestCoin = part
+            end
+        end
+    end
+
+    return closestCoin
+end
+
+-- 메인 루프
+while true do
+    pcall(function()
+        if not isAlive() then
+            task.wait(0.5)
+            return
+        end
+
+        local canDo = true
+
+        -- Spectate 버튼 체크 (간단 버전)
+        pcall(function()
+            local gui = plr:FindFirstChild("PlayerGui")
+            if gui then
+                local mainUI = gui:FindFirstChild("MainUI")
+                if mainUI then
+                    local mobileNav = mainUI:FindFirstChild("MobileNav")
+                    if mobileNav then
+                        local buttons = mobileNav:FindFirstChild("Buttons")
+                        if buttons then
+                            local spectateBtn = buttons:FindFirstChild("Spectate")
+                            if spectateBtn and spectateBtn.ImageTransparency == 0 then
+                                canDo = false
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+
+        if canDo and isAlive() then
+            local closestCoin = getClosestCoin()
+
+            if closestCoin then
+                pcall(function()
+                    -- 제일 가까운 코인으로 걸어서 이동
+                    walkTo(closestCoin.Position + Vector3.new(3, 0, 3))
+
+                    task.wait(0.12)
+                    firetouchinterest(hrp, closestCoin, 0)
+                    task.wait(0.08)
+                    firetouchinterest(hrp, closestCoin, 1)
+                    task.wait(0.08)
+                    firetouchinterest(hrp, closestCoin, 0)
+                    task.wait(0.08)
+                    firetouchinterest(hrp, closestCoin, 1)
+                end)
+            end
+        end
+
+        -- 코인 풀 체크 → 사망
+        pcall(function()
+            local gui = plr:FindFirstChild("PlayerGui")
+            if not gui then return end
+            local mainUI = gui:FindFirstChild("MainUI")
+            if not mainUI then return end
+            local round = mainUI:FindFirstChild("Round")
+            if not round then return end
+            local coinLabel = round:FindFirstChild("Coin")
+            if not coinLabel then return end
+            coinLabel = coinLabel:FindFirstChild("Coin")
+            if not coinLabel then return end
+            coinLabel = coinLabel:FindFirstChild("CoinCount")
+            if not coinLabel or not coinLabel.Text then return end
+
+            local text = coinLabel.Text
+            if text == "100 / 100" or text == "50 / 50" then
+                if isAlive() then
+                    humanoid.Health = 0
+                    print("[CoinWalker] 코인 풀 → 사망 처리")
+                    task.wait(3)
+                end
+            end
+        end)
+    end)
+
+    task.wait(0.15)
+end
