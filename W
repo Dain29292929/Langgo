@@ -24,61 +24,159 @@ local function isAlive()
     return humanoid and humanoid.Health > 0 and hrp and hrp.Parent
 end
 
+-- 코인 폴더를 이벤트로 캐싱: 매번 GetChildren()+IsA() 전체 순회를 피하고
+-- 추가/제거될 때만 리스트를 갱신해서 탐색 속도를 높임
+local coinsFolder = nil
+local cachedCoins = {} -- [part] = true 형태의 set, 순회용 array도 별도 유지
+local coinArray = {}
+local coinIndex = {} -- part -> coinArray의 인덱스 (빠른 제거용)
+local recentlyStuckCoins = setmetatable({}, { __mode = "k" }) -- [part] = 다시 시도 가능한 시각, 끼임으로 포기한 코인 쿨다운
+local STUCK_COOLDOWN = 8 -- 끼임으로 포기한 코인은 8초간 후보에서 제외
+
+local function addCoin(part)
+    if part:IsA("BasePart") and not cachedCoins[part] then
+        cachedCoins[part] = true
+        coinArray[#coinArray + 1] = part
+        coinIndex[part] = #coinArray
+    end
+end
+
+local function removeCoin(part)
+    if cachedCoins[part] then
+        cachedCoins[part] = nil
+        local idx = coinIndex[part]
+        local lastIdx = #coinArray
+        if idx then
+            -- 마지막 요소를 idx 자리로 옮기고 끝을 잘라내는 O(1) 제거
+            local lastPart = coinArray[lastIdx]
+            coinArray[idx] = lastPart
+            coinIndex[lastPart] = idx
+            coinArray[lastIdx] = nil
+            coinIndex[part] = nil
+        end
+    end
+end
+
+local function hookCoinsFolder(folder)
+    coinsFolder = folder
+    cachedCoins = {}
+    coinArray = {}
+    coinIndex = {}
+
+    for _, part in ipairs(folder:GetChildren()) do
+        addCoin(part)
+    end
+
+    folder.ChildAdded:Connect(addCoin)
+    folder.ChildRemoved:Connect(removeCoin)
+end
+
+do
+    local gameFolder = workspace:WaitForChild("Game")
+    local coins = gameFolder:WaitForChild("Coins")
+    hookCoinsFolder(coins)
+end
+
 local function getClosestCoin()
-    local coinsFolder = workspace:FindFirstChild("Game")
-    if coinsFolder then coinsFolder = coinsFolder:FindFirstChild("Coins") end
     if not coinsFolder then return nil end
 
     local closestCoin = nil
-    local shortestDistance = math.huge
+    local shortestSqDist = math.huge
     local hrpPos = hrp.Position
+    local hx, hy, hz = hrpPos.X, hrpPos.Y, hrpPos.Z
+    local now = tick()
 
-    for _, part in pairs(coinsFolder:GetChildren()) do
-        if part:IsA("BasePart") then
-            local distance = (part.Position - hrpPos).Magnitude
-            if distance < shortestDistance then
-                shortestDistance = distance
-                closestCoin = part
+    for i = 1, #coinArray do
+        local part = coinArray[i]
+        if part and part.Parent then -- 혹시 제거 이벤트가 늦게 처리된 경우 방어
+            local skipUntil = recentlyStuckCoins[part]
+            if not skipUntil or now >= skipUntil then -- 최근 포기한 코인은 쿨다운 동안 제외
+                local pos = part.Position
+                local dx, dy, dz = pos.X - hx, pos.Y - hy, pos.Z - hz
+                local sqDist = dx * dx + dy * dy + dz * dz
+                if sqDist < shortestSqDist then
+                    shortestSqDist = sqDist
+                    closestCoin = part
+                end
             end
         end
     end
+
+    -- 모든 코인이 쿨다운 중이라 closestCoin이 nil이면 쿨다운 무시하고 그냥 가장 가까운 걸 선택
+    -- (코인이 몇 개 안 남았는데 전부 막혀있는 경우 정지하지 않도록)
+    if not closestCoin then
+        for i = 1, #coinArray do
+            local part = coinArray[i]
+            if part and part.Parent then
+                local pos = part.Position
+                local dx, dy, dz = pos.X - hx, pos.Y - hy, pos.Z - hz
+                local sqDist = dx * dx + dy * dy + dz * dz
+                if sqDist < shortestSqDist then
+                    shortestSqDist = sqDist
+                    closestCoin = part
+                end
+            end
+        end
+    end
+
     return closestCoin
 end
 
--- waypoint 하나로 이동, 타임아웃 + 도착 감지를 직접 처리 (MoveToFinished 끼임 방지)
-local function moveToWaypoint(position, waypointTimeout)
+-- waypoint 하나로 이동. MoveToFinished를 기다리지 않고
+-- 목표 근처(ARRIVE_RADIUS)에 들어오면 즉시 다음 waypoint로 넘어가서
+-- 끊김 없이 연속으로 움직이게 함. 끼임만 타임아웃으로 감지.
+local ARRIVE_RADIUS = 3.5
+
+local function moveToWaypoint(position, waypointTimeout, onStuck)
     if not isAlive() then return false end
 
     humanoid:MoveTo(position)
 
-    local connection
-    local finished = false
     local startTime = tick()
+    local lastPos = hrp.Position
+    local stuckCheckTime = tick()
+    local noMoveTime = 0
 
-    connection = humanoid.MoveToFinished:Connect(function()
-        finished = true
-    end)
+    while true do
+        if not isAlive() then return false end
 
-    while not finished do
-        if not isAlive() then
-            connection:Disconnect()
-            return false
+        local currentPos = hrp.Position
+        local distance = (Vector3.new(currentPos.X, position.Y, currentPos.Z) - position).Magnitude
+
+        if distance <= ARRIVE_RADIUS then
+            return true -- 충분히 가까워지면 바로 다음 waypoint로 (연속 이동)
         end
+
         if tick() - startTime > waypointTimeout then
-            connection:Disconnect()
-            return false -- 끼임/타임아웃으로 판단, 호출부에서 새 경로 재계산
+            if onStuck then onStuck() end
+            return false -- 진짜 끼임/타임아웃
         end
-        task.wait(0.05)
-    end
 
-    connection:Disconnect()
-    return true
+        -- 0.4초마다 실제로 움직이고 있는지 확인 (벽에 끼여서 제자리인 경우 조기 탈출)
+        if tick() - stuckCheckTime > 0.4 then
+            if (currentPos - lastPos).Magnitude < 0.15 then
+                noMoveTime = noMoveTime + 0.4
+                if noMoveTime >= 3 then
+                    if onStuck then onStuck() end
+                    return false -- 3초 이상 움직임 거의 없음 = 끼임, 새 타겟 탐색
+                end
+            else
+                noMoveTime = 0
+            end
+            lastPos = currentPos
+            stuckCheckTime = tick()
+        end
+
+        task.wait() -- 매 프레임 체크 (폴링 간격 최소화)
+    end
 end
 
 local lastDeathTime = 0
-local DEATH_COOLDOWN = 6
-local MOVE_TIMEOUT = 5       -- 코인 하나당 전체 이동 제한
-local WAYPOINT_TIMEOUT = 1.5 -- 웨이포인트 하나당 제한 (끼임 감지용)
+local DEATH_COOLDOWN = 200
+local WAYPOINT_TIMEOUT = 3.5 -- 웨이포인트 하나당 제한 (끼임 감지용, 3초 정지 체크보다 길게)
+local FAIL_LIMIT = 5 -- 같은 코인이 이 횟수만큼 경로 실패하면 텔레포트로 강제 수집
+
+local pathFailCount = setmetatable({}, { __mode = "k" }) -- [coinPart] = 실패 횟수 (weak table로 메모리 누수 방지)
 
 while true do
     pcall(function()
@@ -105,26 +203,32 @@ while true do
             local closestCoin = getClosestCoin()
             if closestCoin then
                 pcall(function()
-                    local path = PathfindingService:CreatePath({
-                        AgentRadius = 2,
-                        AgentHeight = 5,
-                        AgentCanJump = true
-                    })
+                    local function tryComputePath()
+                        local path = PathfindingService:CreatePath({
+                            AgentRadius = 2,
+                            AgentHeight = 5,
+                            AgentCanJump = true,
+                            AgentCanClimb = true
+                        })
+                        local targetPos = closestCoin.Position
+                        path:ComputeAsync(hrp.Position, targetPos + Vector3.new(3, 0, 3))
+                        return path
+                    end
 
-                    local targetPos = closestCoin.Position
-                    path:ComputeAsync(hrp.Position, targetPos + Vector3.new(3, 0, 3))
+                    local path = tryComputePath()
+
+                    -- 실패하면 잠깐 대기 후 한 번 더 시도 (일시적인 계산 실패 대응)
+                    if path.Status ~= Enum.PathStatus.Success then
+                        task.wait(0.15)
+                        path = tryComputePath()
+                    end
 
                     if path.Status == Enum.PathStatus.Success then
-                        local startTime = tick()
+                        pathFailCount[closestCoin] = nil -- 성공했으니 실패 카운트 리셋
+
                         local waypoints = path:GetWaypoints()
 
                         for i, waypoint in ipairs(waypoints) do
-                            -- 전체 타임아웃
-                            if tick() - startTime > MOVE_TIMEOUT then
-                                print("[CoinWalker] 5초 초과 → 다른 코인으로 전환")
-                                break
-                            end
-
                             -- 코인이 사라졌는지 매 웨이포인트마다 체크
                             if not closestCoin.Parent then
                                 print("[CoinWalker] 코인이 사라짐 → 새 타겟 탐색")
@@ -136,21 +240,43 @@ while true do
                             -- 점프는 이동 시작 직전에 걸어야 타이밍이 맞음
                             if waypoint.Action == Enum.PathWaypointAction.Jump then
                                 humanoid.Jump = true
+                                task.wait() -- 점프 입력이 실제로 적용될 한 프레임 확보
                             end
 
-                            local reached = moveToWaypoint(waypoint.Position, WAYPOINT_TIMEOUT)
+                            local reached = moveToWaypoint(waypoint.Position, WAYPOINT_TIMEOUT, function()
+                                recentlyStuckCoins[closestCoin] = tick() + STUCK_COOLDOWN
+                            end)
                             if not reached then
                                 -- 끼였거나 타임아웃 → 이 코인 포기하고 다음 루프에서 재탐색
                                 break
                             end
                         end
 
-                        -- 수집 (코인이 아직 있고 타임아웃 안 됐을 때만)
-                        if tick() - startTime <= MOVE_TIMEOUT and closestCoin.Parent then
+                        -- 수집 (코인이 아직 있을 때만)
+                        if closestCoin.Parent then
                             task.wait(0.08)
                             firetouchinterest(hrp, closestCoin, 0)
                             task.wait(0.06)
                             firetouchinterest(hrp, closestCoin, 1)
+                        end
+                    else
+                        -- 두 번 다 실패: 실패 횟수 누적, 일정 횟수 넘으면 텔레포트로 강제 수집
+                        local count = (pathFailCount[closestCoin] or 0) + 1
+                        pathFailCount[closestCoin] = count
+                        print("[CoinWalker] 경로 실패 (" .. tostring(path.Status) .. ") " .. count .. "/" .. FAIL_LIMIT)
+
+                        if count >= FAIL_LIMIT and closestCoin.Parent then
+                            print("[CoinWalker] 실패 " .. FAIL_LIMIT .. "회 누적 → 텔레포트로 강제 수집")
+                            pathFailCount[closestCoin] = nil
+                            hrp.CFrame = closestCoin.CFrame + Vector3.new(0, 0, 0)
+                            task.wait(0.1)
+                            if closestCoin.Parent then
+                                firetouchinterest(hrp, closestCoin, 0)
+                                task.wait(0.08)
+                                firetouchinterest(hrp, closestCoin, 1)
+                            end
+                        else
+                            task.wait(0.3)
                         end
                     end
                 end)
