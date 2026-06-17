@@ -1,8 +1,9 @@
 -- ============================================================
--- Coin Walker v3 (수정판)
--- - 가장 가까운 코인 빠르게 탐색
--- - 50/50 되면 계속 죽는 버그 수정
--- - 5초 이상 걸리면 타겟 전환
+-- Coin Walker v4 (개선판)
+-- - 추적 중 코인 사라짐 즉시 감지 → 새 타겟으로 전환
+-- - MoveToFinished 자체 타임아웃 추가 (끼임 방지)
+-- - 점프 타이밍 개선 (MoveTo 전에 미리 Jump)
+-- - 루프 지연 최소화
 -- ============================================================
 
 local PathfindingService = game:GetService("PathfindingService")
@@ -44,11 +45,41 @@ local function getClosestCoin()
     return closestCoin
 end
 
-local lastDeathTime = 0
-local DEATH_COOLDOWN = 6 -- 사망 후 6초 동안은 죽음 체크 안 함
-local MOVE_TIMEOUT = 5 -- 5초 타임아웃
+-- waypoint 하나로 이동, 타임아웃 + 도착 감지를 직접 처리 (MoveToFinished 끼임 방지)
+local function moveToWaypoint(position, waypointTimeout)
+    if not isAlive() then return false end
 
--- 메인 루프
+    humanoid:MoveTo(position)
+
+    local connection
+    local finished = false
+    local startTime = tick()
+
+    connection = humanoid.MoveToFinished:Connect(function()
+        finished = true
+    end)
+
+    while not finished do
+        if not isAlive() then
+            connection:Disconnect()
+            return false
+        end
+        if tick() - startTime > waypointTimeout then
+            connection:Disconnect()
+            return false -- 끼임/타임아웃으로 판단, 호출부에서 새 경로 재계산
+        end
+        task.wait(0.05)
+    end
+
+    connection:Disconnect()
+    return true
+end
+
+local lastDeathTime = 0
+local DEATH_COOLDOWN = 6
+local MOVE_TIMEOUT = 5       -- 코인 하나당 전체 이동 제한
+local WAYPOINT_TIMEOUT = 1.5 -- 웨이포인트 하나당 제한 (끼임 감지용)
+
 while true do
     pcall(function()
         if not isAlive() then
@@ -58,7 +89,6 @@ while true do
 
         local canDo = true
 
-        -- Spectate 체크
         pcall(function()
             local spec = plr:FindFirstChild("PlayerGui")
                 and plr.PlayerGui:FindFirstChild("MainUI")
@@ -74,35 +104,48 @@ while true do
         if canDo and isAlive() then
             local closestCoin = getClosestCoin()
             if closestCoin then
-                local success = pcall(function()
+                pcall(function()
                     local path = PathfindingService:CreatePath({
                         AgentRadius = 2,
                         AgentHeight = 5,
                         AgentCanJump = true
                     })
 
-                    path:ComputeAsync(hrp.Position, closestCoin.Position + Vector3.new(3, 0, 3))
+                    local targetPos = closestCoin.Position
+                    path:ComputeAsync(hrp.Position, targetPos + Vector3.new(3, 0, 3))
 
                     if path.Status == Enum.PathStatus.Success then
                         local startTime = tick()
-                        
-                        for _, waypoint in ipairs(path:GetWaypoints()) do
-                            -- 타임아웃 체크
+                        local waypoints = path:GetWaypoints()
+
+                        for i, waypoint in ipairs(waypoints) do
+                            -- 전체 타임아웃
                             if tick() - startTime > MOVE_TIMEOUT then
                                 print("[CoinWalker] 5초 초과 → 다른 코인으로 전환")
                                 break
                             end
-                            
+
+                            -- 코인이 사라졌는지 매 웨이포인트마다 체크
+                            if not closestCoin.Parent then
+                                print("[CoinWalker] 코인이 사라짐 → 새 타겟 탐색")
+                                break
+                            end
+
                             if not isAlive() then break end
-                            humanoid:MoveTo(waypoint.Position)
-                            humanoid.MoveToFinished:Wait()
-                            
+
+                            -- 점프는 이동 시작 직전에 걸어야 타이밍이 맞음
                             if waypoint.Action == Enum.PathWaypointAction.Jump then
                                 humanoid.Jump = true
                             end
+
+                            local reached = moveToWaypoint(waypoint.Position, WAYPOINT_TIMEOUT)
+                            if not reached then
+                                -- 끼였거나 타임아웃 → 이 코인 포기하고 다음 루프에서 재탐색
+                                break
+                            end
                         end
 
-                        -- 수집 (타임아웃 안 됐을 때만)
+                        -- 수집 (코인이 아직 있고 타임아웃 안 됐을 때만)
                         if tick() - startTime <= MOVE_TIMEOUT and closestCoin.Parent then
                             task.wait(0.08)
                             firetouchinterest(hrp, closestCoin, 0)
@@ -114,7 +157,6 @@ while true do
             end
         end
 
-        -- 코인 풀 체크 (버그 수정 버전)
         if tick() - lastDeathTime > DEATH_COOLDOWN then
             pcall(function()
                 local coinText = plr:FindFirstChild("PlayerGui")
@@ -135,5 +177,5 @@ while true do
         end
     end)
 
-    task.wait(0.06) -- wait 2배 낮춤 (0.12 → 0.06)
+    task.wait(0.03)
 end
