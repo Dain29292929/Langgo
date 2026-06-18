@@ -181,7 +181,7 @@ local pathFailCount = setmetatable({}, { __mode = "k" }) -- [coinPart] = 실패 
 while true do
     pcall(function()
         if not isAlive() then
-            task.wait(0.2)
+            task.wait(0.02)
             return
         end
 
@@ -219,7 +219,7 @@ while true do
 
                     -- 실패하면 잠깐 대기 후 한 번 더 시도 (일시적인 계산 실패 대응)
                     if path.Status ~= Enum.PathStatus.Success then
-                        task.wait(0.05)
+                        task.wait(0.01)
                         path = tryComputePath()
                     end
 
@@ -303,5 +303,5 @@ while true do
         end
     end)
 
-    task.wait(0.03)
+    task.wait(0.01)
 end
