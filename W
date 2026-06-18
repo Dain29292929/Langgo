@@ -219,7 +219,7 @@ while true do
 
                     -- 실패하면 잠깐 대기 후 한 번 더 시도 (일시적인 계산 실패 대응)
                     if path.Status ~= Enum.PathStatus.Success then
-                        task.wait(0.15)
+                        task.wait(0.05)
                         path = tryComputePath()
                     end
 
@@ -254,9 +254,9 @@ while true do
 
                         -- 수집 (코인이 아직 있을 때만)
                         if closestCoin.Parent then
-                            task.wait(0.08)
+                            task.wait(0.02)
                             firetouchinterest(hrp, closestCoin, 0)
-                            task.wait(0.06)
+                            task.wait(0.02)
                             firetouchinterest(hrp, closestCoin, 1)
                         end
                     else
@@ -268,15 +268,15 @@ while true do
                         if count >= FAIL_LIMIT and closestCoin.Parent then
                             print("[CoinWalker] 실패 " .. FAIL_LIMIT .. "회 누적 → 텔레포트로 강제 수집")
                             pathFailCount[closestCoin] = nil
-                            hrp.CFrame = closestCoin.CFrame + Vector3.new(0, 0, 0)
+                            hrp.CFrame = closestCoin.CFrame + Vector3.new(2, 0, 2)
                             task.wait(0.1)
                             if closestCoin.Parent then
                                 firetouchinterest(hrp, closestCoin, 0)
-                                task.wait(0.08)
+                                task.wait(0.02)
                                 firetouchinterest(hrp, closestCoin, 1)
                             end
                         else
-                            task.wait(0.3)
+                            wait()
                         end
                     end
                 end)
