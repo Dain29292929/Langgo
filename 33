@@ -1,0 +1,355 @@
+-- ============================================================
+-- Coin Walker v8.7 (Speed 85 + XYZ Move + 5쌍 FT + wait 0.015)
+-- - 속도 85
+-- - XYZ 전부 이동
+-- - 코인 + (2,0,2) 위치로 이동
+-- - firetouchinterest 5쌍, wait 0.015초
+-- - 반경 10 수집
+-- ============================================================
+
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+
+local plr = Players.LocalPlayer
+local char = plr.Character or plr.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+local humanoid = char:WaitForChild("Humanoid")
+
+local bodyVelocity = nil
+
+local function createBodyVelocity()
+    if hrp and hrp.Parent and not bodyVelocity then
+        pcall(function()
+            bodyVelocity = Instance.new("BodyVelocity")
+            bodyVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+            bodyVelocity.Velocity = Vector3.zero
+            bodyVelocity.P = 1000
+            bodyVelocity.Parent = hrp
+        end)
+    end
+end
+
+local function destroyBodyVelocity()
+    if bodyVelocity then
+        pcall(function() bodyVelocity:Destroy() end)
+        bodyVelocity = nil
+    end
+end
+
+local function lockBody()
+    if bodyVelocity then
+        pcall(function() bodyVelocity.Velocity = Vector3.zero end)
+    end
+    if hrp and hrp.Parent then
+        hrp.Anchored = true
+    end
+    if humanoid and humanoid.Parent then
+        humanoid.PlatformStand = true
+    end
+end
+
+local function unlockBody()
+    if hrp and hrp.Parent then
+        hrp.Anchored = false
+    end
+    if humanoid and humanoid.Parent then
+        humanoid.PlatformStand = true
+    end
+    createBodyVelocity()
+end
+
+local function isHrpValid()
+    return hrp ~= nil and hrp.Parent ~= nil and hrp:IsA("BasePart")
+end
+
+plr.CharacterAdded:Connect(function(newChar)
+    destroyBodyVelocity()
+    char = newChar
+    hrp = newChar:WaitForChild("HumanoidRootPart")
+    humanoid = newChar:WaitForChild("Humanoid")
+    createBodyVelocity()
+    lockBody()
+    enableNoclip()
+end)
+
+local function isAlive()
+    if not humanoid or not humanoid.Parent then return false end
+    if humanoid.Health <= 0 then return false end
+    if not isHrpValid() then return false end
+    return true
+end
+
+-- ==================== 코인 캐싱 ====================
+local coinsFolder = nil
+local cachedCoins = {}
+local coinArray = {}
+local coinIndex = {}
+
+local function addCoin(part)
+    if part and part:IsA("BasePart") and not cachedCoins[part] then
+        cachedCoins[part] = true
+        coinArray[#coinArray + 1] = part
+        coinIndex[part] = #coinArray
+    end
+end
+
+local function removeCoin(part)
+    if part and cachedCoins[part] then
+        cachedCoins[part] = nil
+        local idx = coinIndex[part]
+        local lastIdx = #coinArray
+        if idx then
+            local lastPart = coinArray[lastIdx]
+            if lastPart then
+                coinArray[idx] = lastPart
+                coinIndex[lastPart] = idx
+            end
+            coinArray[lastIdx] = nil
+            coinIndex[part] = nil
+        end
+    end
+end
+
+local function hookCoinsFolder(folder)
+    coinsFolder = folder
+    cachedCoins = {}
+    coinArray = {}
+    coinIndex = {}
+
+    if folder then
+        for _, part in ipairs(folder:GetChildren()) do
+            addCoin(part)
+        end
+
+        folder.ChildAdded:Connect(addCoin)
+        folder.ChildRemoved:Connect(removeCoin)
+    end
+end
+
+do
+    pcall(function()
+        local gameFolder = workspace:WaitForChild("Game")
+        local coins = gameFolder:WaitForChild("Coins")
+        hookCoinsFolder(coins)
+    end)
+end
+
+-- ==================== Noclip ====================
+local noclipConn
+
+local function enableNoclip()
+    if noclipConn then pcall(function() noclipConn:Disconnect() end) end
+    noclipConn = RunService.Stepped:Connect(function()
+        pcall(function()
+            if char and char.Parent then
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part and part:IsA("BasePart") then
+                        part.CanCollide = false
+                    end
+                end
+            end
+        end)
+    end)
+end
+
+enableNoclip()
+createBodyVelocity()
+lockBody()
+
+-- ==================== firetouchinterest 5쌍 ====================
+local function doFireTouch(coin)
+    if not isAlive() then return end
+    if not coin or not coin.Parent then return end
+    if not isHrpValid() then return end
+
+    firetouchinterest(hrp, coin, 0)
+    task.wait(0.015)
+    firetouchinterest(hrp, coin, 1)
+    task.wait(0.015)
+    firetouchinterest(hrp, coin, 0)
+    task.wait(0.015)
+    firetouchinterest(hrp, coin, 1)
+    task.wait(0.015)
+    firetouchinterest(hrp, coin, 0)
+    task.wait(0.015)
+    firetouchinterest(hrp, coin, 1)
+    task.wait(0.015)
+    firetouchinterest(hrp, coin, 0)
+    task.wait(0.015)
+    firetouchinterest(hrp, coin, 1)
+    task.wait(0.015)
+    firetouchinterest(hrp, coin, 0)
+    task.wait(0.015)
+    firetouchinterest(hrp, coin, 1)
+end
+
+-- ==================== 다음 코인 ====================
+local function getNextCoin()
+    if #coinArray > 0 then
+        local coin = coinArray[1]
+        if coin and coin.Parent then
+            return coin
+        else
+            removeCoin(coin)
+            return getNextCoin()
+        end
+    end
+    return nil
+end
+
+-- ==================== 반경 내 모든 코인 수집 ====================
+local function collectAllNearbyCoins(radius)
+    if not isAlive() then return 0 end
+    if not isHrpValid() then return 0 end
+
+    local collectedCount = 0
+    local hrpPos = hrp.Position
+
+    local i = 1
+    while i <= #coinArray do
+        local coin = coinArray[i]
+        if coin and coin.Parent then
+            local dist = (coin.Position - hrpPos).Magnitude
+            if dist <= radius then
+                doFireTouch(coin)
+                collectedCount = collectedCount + 1
+                removeCoin(coin)
+            else
+                i = i + 1
+            end
+        else
+            removeCoin(coin)
+        end
+    end
+
+    return collectedCount
+end
+
+-- ==================== 직접 CFrame 이동 ====================
+local function moveToTarget(targetPos, targetCoin)
+    local SPEED = 85
+    local ARRIVAL_DIST = 2
+
+    while true do
+        if not isAlive() then return false end
+        if not isHrpValid() then return false end
+        if not targetCoin.Parent then return false end
+
+        local currentPos = hrp.Position
+        local dist = (currentPos - targetPos).Magnitude
+
+        if dist <= ARRIVAL_DIST then
+            return true
+        end
+
+        local direction = (targetPos - currentPos).Unit
+        local step = SPEED * 0.01
+
+        local newPos
+        if step >= dist then
+            newPos = targetPos
+        else
+            newPos = currentPos + direction * step
+        end
+
+        hrp.CFrame = CFrame.new(newPos)
+
+        if bodyVelocity then
+            bodyVelocity.Velocity = Vector3.zero
+        end
+
+        collectAllNearbyCoins(10)
+
+        task.wait(0.01)
+    end
+end
+
+-- ==================== 메인 루프 ====================
+local lastDeathTime = 0
+local DEATH_COOLDOWN = 200
+local OFFSET_X = 2
+local OFFSET_Y = 0
+local OFFSET_Z = 2
+
+while true do
+    pcall(function()
+        if not isAlive() then
+            lockBody()
+            task.wait(0.01)
+            return
+        end
+
+        local canDo = true
+
+        pcall(function()
+            local spec = plr:FindFirstChild("PlayerGui")
+            if spec then spec = spec:FindFirstChild("MainUI") end
+            if spec then spec = spec:FindFirstChild("MobileNav") end
+            if spec then spec = spec:FindFirstChild("Buttons") end
+            if spec then spec = spec:FindFirstChild("Spectate") end
+
+            if spec and spec.ImageTransparency == 0 then
+                canDo = false
+            end
+        end)
+
+        if canDo and isAlive() then
+            collectAllNearbyCoins(10)
+        end
+
+        if canDo and isAlive() then
+            local targetCoin = getNextCoin()
+            if targetCoin and targetCoin.Parent then
+                pcall(function()
+                    unlockBody()
+
+                    local coinPos = targetCoin.Position
+
+                    local targetPos = Vector3.new(
+                        coinPos.X + OFFSET_X,
+                        coinPos.Y + OFFSET_Y,
+                        coinPos.Z + OFFSET_Z
+                    )
+
+                    local arrived = moveToTarget(targetPos, targetCoin)
+
+                    if arrived and isAlive() and targetCoin.Parent then
+                        doFireTouch(targetCoin)
+                        collectAllNearbyCoins(10)
+                    end
+
+                    lockBody()
+
+                    if isAlive() then
+                        collectAllNearbyCoins(10)
+                    end
+                end)
+            else
+                lockBody()
+            end
+        else
+            lockBody()
+        end
+
+        if tick() - lastDeathTime > DEATH_COOLDOWN then
+            pcall(function()
+                local coinText = plr:FindFirstChild("PlayerGui")
+                if coinText then coinText = coinText:FindFirstChild("MainUI") end
+                if coinText then coinText = coinText:FindFirstChild("Round") end
+                if coinText then coinText = coinText:FindFirstChild("Coin") end
+                if coinText then coinText = coinText:FindFirstChild("Coin") end
+                if coinText then coinText = coinText:FindFirstChild("CoinCount") end
+
+                if coinText and coinText.Text and (coinText.Text == "100 / 100" or coinText.Text == "50 / 50") then
+                    if isAlive() then
+                        humanoid.Health = 0
+                        lastDeathTime = tick()
+                        print("[CoinWalker] 코인 풀 → 사망 처리")
+                    end
+                end
+            end)
+        end
+    end)
+
+    task.wait(0.01)
+end
