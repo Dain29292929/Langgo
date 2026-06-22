@@ -1,0 +1,387 @@
+-- =====================================================
+-- Roblox 인벤토리 아이템 선택 전송 GUI (드롭다운 스타일)
+-- =====================================================
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local SharedModules = ReplicatedStorage:WaitForChild("SharedModules", 120)
+local ClientModules = ReplicatedStorage:WaitForChild("ClientModules", 120)
+local Networking = require(SharedModules:WaitForChild("Networking"))
+local PlayerStateClient = require(ClientModules:WaitForChild("PlayerStateClient"))
+
+local cats = {
+	"Pets", "Sprinklers", "WateringCans", "Mushrooms", "Gnomes", "Raccoons",
+	"Crates", "SeedPacks", "Trowels", "Props", "Seeds", "HarvestedFruits", "EmptyPots",
+}
+
+repeat task.wait() until LocalPlayer:HasTag("DataLoaded")
+task.wait(1)
+
+local replica = PlayerStateClient:GetLocalReplica() or PlayerStateClient:WaitForLocalReplica(30)
+local inv = replica and replica.Data and replica.Data.Inventory
+if not inv then
+	warn("인벤토리 데이터를 불러올 수 없습니다.")
+	return
+end
+
+-- 인벤토리 데이터 정리
+local categoryItems = {}
+for _, cat in cats do
+	local bucket = inv[cat]
+	if typeof(bucket) \~= "table" then continue end
+	
+	categoryItems[cat] = {}
+	
+	if cat == "Pets" or cat == "HarvestedFruits" then
+		for key, entry in bucket do
+			if typeof(entry) == "table" and entry.Id then
+				if cat == "Pets" and entry.Equipped then continue end
+				table.insert(categoryItems[cat], {key = key, count = 1})
+			end
+		end
+	else
+		for key, count in bucket do
+			if typeof(count) == "number" and count > 0 then
+				if string.find(string.lower(tostring(key)), "watering can", 1, true) then continue end
+				table.insert(categoryItems[cat], {key = key, count = count})
+			end
+		end
+	end
+end
+
+-- GUI 생성
+local gui = Instance.new("ScreenGui")
+gui.Name = "ItemSenderGUI"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 520, 0, 420)
+mainFrame.Position = UDim2.new(0.5, -260, 0.5, -210)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = gui
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 12)
+uiCorner.Parent = mainFrame
+
+-- Title Bar
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 12)
+titleCorner.Parent = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Text = "📦 아이템 선택 전송"
+titleLabel.Size = UDim2.new(1, -50, 1, 0)
+titleLabel.Position = UDim2.new(0, 15, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 20
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleBar
+
+local closeButton = Instance.new("TextButton")
+closeButton.Text = "✕"
+closeButton.Size = UDim2.new(0, 35, 0, 30)
+closeButton.Position = UDim2.new(1, -40, 0, 5)
+closeButton.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+closeButton.TextColor3 = Color3.white
+closeButton.TextSize = 18
+closeButton.Font = Enum.Font.GothamBold
+closeButton.Parent = titleBar
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeButton
+
+closeButton.MouseButton1Click:Connect(function()
+	gui:Destroy()
+end)
+
+-- Category Section
+local catLabel = Instance.new("TextLabel")
+catLabel.Text = "카테고리 선택"
+catLabel.Size = UDim2.new(0.45, 0, 0, 25)
+catLabel.Position = UDim2.new(0, 15, 0, 50)
+catLabel.BackgroundTransparency = 1
+catLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+catLabel.TextSize = 14
+catLabel.Font = Enum.Font.Gotham
+catLabel.Parent = mainFrame
+
+local catScroll = Instance.new("ScrollingFrame")
+catScroll.Size = UDim2.new(0.45, -10, 0, 200)
+catScroll.Position = UDim2.new(0, 15, 0, 80)
+catScroll.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+catScroll.BorderSizePixel = 0
+catScroll.ScrollBarThickness = 6
+catScroll.Parent = mainFrame
+
+local catListLayout = Instance.new("UIListLayout")
+catListLayout.Padding = UDim.new(0, 4)
+catListLayout.Parent = catScroll
+
+-- Item Section
+local itemLabel = Instance.new("TextLabel")
+itemLabel.Text = "아이템 선택"
+itemLabel.Size = UDim2.new(0.5, 0, 0, 25)
+itemLabel.Position = UDim2.new(0.5, 5, 0, 50)
+itemLabel.BackgroundTransparency = 1
+itemLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+itemLabel.TextSize = 14
+itemLabel.Font = Enum.Font.Gotham
+itemLabel.Parent = mainFrame
+
+local itemScroll = Instance.new("ScrollingFrame")
+itemScroll.Size = UDim2.new(0.5, -20, 0, 200)
+itemScroll.Position = UDim2.new(0.5, 5, 0, 80)
+itemScroll.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+itemScroll.BorderSizePixel = 0
+itemScroll.ScrollBarThickness = 6
+itemScroll.Parent = mainFrame
+
+local itemListLayout = Instance.new("UIListLayout")
+itemListLayout.Padding = UDim.new(0, 3)
+itemListLayout.Parent = itemScroll
+
+-- Selected Info
+local selectedLabel = Instance.new("TextLabel")
+selectedLabel.Text = "선택된 아이템: 없음"
+selectedLabel.Size = UDim2.new(1, -30, 0, 30)
+selectedLabel.Position = UDim2.new(0, 15, 0, 295)
+selectedLabel.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+selectedLabel.TextColor3 = Color3.fromRGB(255, 220, 100)
+selectedLabel.TextSize = 15
+selectedLabel.Font = Enum.Font.Gotham
+selectedLabel.TextXAlignment = Enum.TextXAlignment.Left
+selectedLabel.Parent = mainFrame
+
+local selectedPadding = Instance.new("UIPadding")
+selectedPadding.PaddingLeft = UDim.new(0, 10)
+selectedPadding.Parent = selectedLabel
+
+-- Count Input
+local countLabel = Instance.new("TextLabel")
+countLabel.Text = "보낼 수량:"
+countLabel.Size = UDim2.new(0, 80, 0, 30)
+countLabel.Position = UDim2.new(0, 15, 0, 335)
+countLabel.BackgroundTransparency = 1
+countLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+countLabel.TextSize = 14
+countLabel.Font = Enum.Font.Gotham
+countLabel.Parent = mainFrame
+
+local countBox = Instance.new("TextBox")
+countBox.PlaceholderText = "수량 입력 (숫자)"
+countBox.Text = "1"
+countBox.Size = UDim2.new(0, 120, 0, 30)
+countBox.Position = UDim2.new(0, 100, 0, 335)
+countBox.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+countBox.TextColor3 = Color3.white
+countBox.TextSize = 16
+countBox.Font = Enum.Font.Gotham
+countBox.ClearTextOnFocus = false
+countBox.Parent = mainFrame
+
+local countCorner = Instance.new("UICorner")
+countCorner.CornerRadius = UDim.new(0, 6)
+countCorner.Parent = countBox
+
+-- Target Player Input
+local targetLabel = Instance.new("TextLabel")
+targetLabel.Text = "받을 사람 닉네임:"
+targetLabel.Size = UDim2.new(0, 120, 0, 30)
+targetLabel.Position = UDim2.new(0, 230, 0, 335)
+targetLabel.BackgroundTransparency = 1
+targetLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+targetLabel.TextSize = 14
+targetLabel.Font = Enum.Font.Gotham
+targetLabel.Parent = mainFrame
+
+local targetBox = Instance.new("TextBox")
+targetBox.PlaceholderText = "받을 사람 정확한 닉네임"
+targetBox.Text = ""
+targetBox.Size = UDim2.new(0, 150, 0, 30)
+targetBox.Position = UDim2.new(0, 355, 0, 335)
+targetBox.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+targetBox.TextColor3 = Color3.white
+targetBox.TextSize = 14
+targetBox.Font = Enum.Font.Gotham
+targetBox.ClearTextOnFocus = false
+targetBox.Parent = mainFrame
+
+local targetCorner = Instance.new("UICorner")
+targetCorner.CornerRadius = UDim.new(0, 6)
+targetCorner.Parent = targetBox
+
+-- Send Button
+local sendButton = Instance.new("TextButton")
+sendButton.Text = "🚀 선택한 아이템 보내기"
+sendButton.Size = UDim2.new(0, 200, 0, 38)
+sendButton.Position = UDim2.new(0.5, -100, 0, 375)
+sendButton.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+sendButton.TextColor3 = Color3.white
+sendButton.TextSize = 16
+sendButton.Font = Enum.Font.GothamBold
+sendButton.Parent = mainFrame
+
+local sendCorner = Instance.new("UICorner")
+sendCorner.CornerRadius = UDim.new(0, 8)
+sendCorner.Parent = sendButton
+
+-- Status Label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Text = ""
+statusLabel.Size = UDim2.new(1, -30, 0, 20)
+statusLabel.Position = UDim2.new(0, 15, 0, 415)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
+statusLabel.TextSize = 13
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.Parent = mainFrame
+
+-- Variables
+local selectedCat = nil
+local selectedKey = nil
+local selectedMaxCount = 0
+
+-- 카테고리 버튼 생성
+local function createCategoryButton(catName, itemCount)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -10, 0, 28)
+	btn.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+	btn.TextColor3 = Color3.white
+	btn.Text = string.format("%s (%d)", catName, itemCount)
+	btn.TextSize = 14
+	btn.Font = Enum.Font.Gotham
+	btn.Parent = catScroll
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = btn
+	
+	btn.MouseButton1Click:Connect(function()
+		-- 이전 아이템 목록 초기화
+		for _, child in itemScroll:GetChildren() do
+			if child:IsA("TextButton") then child:Destroy() end
+		end
+		
+		selectedCat = catName
+		selectedKey = nil
+		selectedMaxCount = 0
+		selectedLabel.Text = "선택된 아이템: 없음"
+		countBox.Text = "1"
+		
+		-- 아이템 목록 생성
+		local items = categoryItems[catName] or {}
+		for _, item in items do
+			local itemBtn = Instance.new("TextButton")
+			itemBtn.Size = UDim2.new(1, -8, 0, 26)
+			itemBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+			itemBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+			itemBtn.Text = string.format("%s  (보유: %d)", item.key, item.count)
+			itemBtn.TextSize = 13
+			itemBtn.Font = Enum.Font.Gotham
+			itemBtn.Parent = itemScroll
+			
+			local icorner = Instance.new("UICorner")
+			icorner.CornerRadius = UDim.new(0, 5)
+			icorner.Parent = itemBtn
+			
+			itemBtn.MouseButton1Click:Connect(function()
+				selectedKey = item.key
+				selectedMaxCount = item.count
+				selectedLabel.Text = string.format("선택된 아이템: %s (최대 %d개)", item.key, item.count)
+				countBox.Text = tostring(math.min(tonumber(countBox.Text) or 1, item.count))
+			end)
+		end
+		
+		-- 스크롤 크기 조정
+		itemScroll.CanvasSize = UDim2.new(0, 0, 0, #items * 29)
+	end)
+	
+	return btn
+end
+
+-- 카테고리 목록 채우기 (아이템 있는 것만)
+local totalCats = 0
+for _, cat in cats do
+	local items = categoryItems[cat]
+	if items and #items > 0 then
+		createCategoryButton(cat, #items)
+		totalCats += 1
+	end
+end
+
+catScroll.CanvasSize = UDim2.new(0, 0, 0, totalCats * 32)
+
+-- 보내기 버튼 기능
+sendButton.MouseButton1Click:Connect(function()
+	if not selectedCat or not selectedKey then
+		statusLabel.Text = "⚠️ 카테고리와 아이템을 먼저 선택하세요!"
+		statusLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
+		task.delay(2, function()
+			if statusLabel then statusLabel.Text = "" end
+		end)
+		return
+	end
+	
+	local count = tonumber(countBox.Text) or 1
+	if count < 1 then count = 1 end
+	if count > selectedMaxCount then count = selectedMaxCount end
+	
+	-- 배치 생성
+	local batch = {
+		{Category = selectedCat, ItemKey = selectedKey, Count = count}
+	}
+	
+	local targetPlayer = targetBox.Text
+	if targetPlayer == "" then
+		statusLabel.Text = "⚠️ 받을 사람 닉네임을 입력하세요!"
+		statusLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
+		return
+	end
+	
+	local uid = Networking.Mailbox.LookupPlayer:Fire(targetPlayer)
+	if typeof(uid) \~= "number" or uid <= 0 then
+		statusLabel.Text = "❌ 대상 플레이어를 찾을 수 없습니다."
+		statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+		return
+	end
+	
+	local success = pcall(function()
+		Networking.Mailbox.SendBatch:Fire(uid, batch, "GUI 전송")
+	end)
+	
+	if success then
+		statusLabel.Text = string.format("✅ %s x%d 전송 완료!", selectedKey, count)
+		statusLabel.TextColor3 = Color3.fromRGB(100, 255, 150)
+		-- 선택 초기화
+		selectedKey = nil
+		selectedLabel.Text = "선택된 아이템: 없음"
+	else
+		statusLabel.Text = "❌ 전송 실패 (오류 발생)"
+		statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+	end
+	
+	task.delay(3, function()
+		if statusLabel then statusLabel.Text = "" end
+	end)
+end)
+
+print("[ItemSenderGUI] GUI가 생성되었습니다. 화면에서 확인하세요!")
